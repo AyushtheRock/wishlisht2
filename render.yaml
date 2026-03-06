@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: shein-stock-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    healthCheckPath: /
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: CHAT_ID
+        sync: false
+      - key: RENDER_URL
+        sync: false
+      - key: POLL_INTERVAL
+        value: "300"
+    # No disk — all data stored in /tmp (clears on restart)
