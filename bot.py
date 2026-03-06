@@ -22,6 +22,7 @@ OTHER FIXES:
   • /instock shows all available items with buy links, auto-splits
   • Keepalive URL double-slash fix
   • Global menu button set in post_init
+  • /addnewproduct supports multiple links/codes in one message
 """
 
 import os
@@ -56,7 +57,7 @@ WISHLIST_API      = BASE_URL + "/api/wishlist/getwishlist"
 ADD_WISHLIST_API  = BASE_URL + "/api/wishlist/addProductToWishlist"
 PRODUCT_API       = BASE_URL + "/api/p/fetchProducts/{code}?SearchExperimentFlag={{}}"
 CHECK_INTERVAL    = 180       # seconds between checks (3 minutes)
-JITTER_RANGE      = 30        # ±seconds random jitter
+JITTER_RANGE      = 30        # +-seconds random jitter
 MAX_BACKOFF       = 900       # max backoff seconds (15 minutes)
 AUTH_FAIL_TOLERANCE = 3       # consecutive auth failures before giving up
 SESSIONS_FILE       = "sessions.json"  # persisted sessions across restarts
@@ -125,7 +126,7 @@ def _run_health_server():
 # ─── KEEPALIVE ────────────────────────────────────────────────────────────────
 def _keepalive_loop():
     if not RENDER_URL:
-        print(f"{CYAN}[keepalive] RENDER_URL not set — skipping{RESET}")
+        print(f"{CYAN}[keepalive] RENDER_URL not set - skipping{RESET}")
         return
     url = RENDER_URL + "/health"
     print(f"{GREEN}[keepalive] Will ping {url} every 3 min{RESET}")
@@ -189,7 +190,7 @@ def _validate_cookies(c: str) -> bool:
     session_keys = ["abt_medusa", "cookieId", "memberId", "sessionId",
                     "shein_sbn", "_shein", "acSite", "sheinCookieId"]
     if not any(k.lower() in c.lower() for k in session_keys):
-        print(f"{CYAN}[cookies] Warning: no known session key found — proceeding anyway{RESET}")
+        print(f"{CYAN}[cookies] Warning: no known session key found - proceeding anyway{RESET}")
     return True
 
 # ─── WISHLIST FETCHING ────────────────────────────────────────────────────────
@@ -213,10 +214,10 @@ def _fetch_page(headers: dict, page: int):
 def _fetch_full_wishlist(headers: dict):
     """
     Returns one of:
-      ("AUTH_FAILED", None)          — confirmed auth failure
-      ("RATE_LIMITED", None)         — HTTP 429
-      (None, None)                   — transient network/parse error
-      (snapshot_dict, products_dict) — success
+      ("AUTH_FAILED", None)          - confirmed auth failure
+      ("RATE_LIMITED", None)         - HTTP 429
+      (None, None)                   - transient network/parse error
+      (snapshot_dict, products_dict) - success
 
     snapshot_dict : { variant_code: "inStock" | "outOfStock" }
     products_dict : { variant_code: { name, size, price, image_url, product_url } }
@@ -241,7 +242,7 @@ def _fetch_full_wishlist(headers: dict):
                 if st is not None:
                     return page, p, st
                 wait = attempt * 5
-                print(f"{CYAN}[fetch] page={page} timeout attempt={attempt}/3 — retrying in {wait}s{RESET}")
+                print(f"{CYAN}[fetch] page={page} timeout attempt={attempt}/3 - retrying in {wait}s{RESET}")
                 time.sleep(wait)
             return page, {}, None
 
@@ -256,10 +257,10 @@ def _fetch_full_wishlist(headers: dict):
         for pg in range(2, total_pages + 1):
             p, st = results.get(pg, ({}, None))
             if st in (401, 403):
-                print(f"{RED}[fetch] AUTH on page {pg} — using partial results{RESET}")
+                print(f"{RED}[fetch] AUTH on page {pg} - using partial results{RESET}")
                 break
             if st is None:
-                print(f"{RED}[fetch] page={pg} failed after 3 retries — skipping{RESET}")
+                print(f"{RED}[fetch] page={pg} failed after 3 retries - skipping{RESET}")
                 continue
             if p and "products" in p:
                 all_pages.append(p)
@@ -341,7 +342,7 @@ async def _send_stock_alert(bot, uid: int, product_name: str, sizes: list, info:
                     )
                     return
                 except Exception as photo_err:
-                    print(f"{RED}[alert] photo failed uid={uid}: {photo_err} — falling back to text{RESET}")
+                    print(f"{RED}[alert] photo failed uid={uid}: {photo_err} - falling back to text{RESET}")
 
         await bot.send_message(
             uid,
@@ -358,7 +359,7 @@ async def _monitor_loop(uid: int, app):
     session = user_sessions.get(uid)
     if not session:
         return
-    print(f"{CYAN}[monitor] Started uid={uid} interval={CHECK_INTERVAL}s±{JITTER_RANGE}s{RESET}")
+    print(f"{CYAN}[monitor] Started uid={uid} interval={CHECK_INTERVAL}s+-{JITTER_RANGE}s{RESET}")
 
     consecutive_failures = 0
     auth_fail_streak     = 0
@@ -375,7 +376,7 @@ async def _monitor_loop(uid: int, app):
 
         session = user_sessions.get(uid)
         if not session:
-            print(f"{CYAN}[monitor] uid={uid} session removed — stopping{RESET}")
+            print(f"{CYAN}[monitor] uid={uid} session removed - stopping{RESET}")
             break
 
         headers       = session["headers"]
@@ -395,14 +396,14 @@ async def _monitor_loop(uid: int, app):
             print(f"{RED}[monitor] uid={uid} AUTH streak={auth_fail_streak}/{AUTH_FAIL_TOLERANCE}{RESET}")
             if auth_fail_streak < AUTH_FAIL_TOLERANCE:
                 backoff = min(60 * auth_fail_streak, 300)
-                print(f"{CYAN}[monitor] uid={uid} transient — backing off {backoff}s{RESET}")
+                print(f"{CYAN}[monitor] uid={uid} transient - backing off {backoff}s{RESET}")
                 continue
-            print(f"{RED}[monitor] uid={uid} AUTH confirmed expired — stopping{RESET}")
+            print(f"{RED}[monitor] uid={uid} AUTH confirmed expired - stopping{RESET}")
             try:
                 await app.bot.send_message(
                     uid,
                     "⚠️ *Your Shein session has expired.*\n\n"
-                    "Confirmed after multiple attempts — cookies are no longer valid.\n\n"
+                    "Confirmed after multiple attempts - cookies are no longer valid.\n\n"
                     "Please use /start to upload fresh cookies.",
                     parse_mode="Markdown"
                 )
@@ -414,7 +415,7 @@ async def _monitor_loop(uid: int, app):
 
         elif new_snap == "RATE_LIMITED":
             backoff = min(backoff * 2 + 60, MAX_BACKOFF)
-            print(f"{RED}[monitor] uid={uid} rate limited — backoff {backoff}s{RESET}")
+            print(f"{RED}[monitor] uid={uid} rate limited - backoff {backoff}s{RESET}")
             continue
 
         elif new_snap is None:
@@ -422,7 +423,7 @@ async def _monitor_loop(uid: int, app):
             consecutive_failures += 1
             print(f"{RED}[monitor] uid={uid} temp failure #{consecutive_failures}{RESET}")
             if consecutive_failures >= MAX_FAILURES:
-                print(f"{RED}[monitor] uid={uid} {MAX_FAILURES} failures — stopping{RESET}")
+                print(f"{RED}[monitor] uid={uid} {MAX_FAILURES} failures - stopping{RESET}")
                 try:
                     await app.bot.send_message(
                         uid,
@@ -460,11 +461,11 @@ async def _monitor_loop(uid: int, app):
                 newly_restocked[name].append((info.get("size", "?"), code, info))
                 alerted_codes.add(code)
 
-        # Step 3: send alerts — one message per product, no cap
+        # Step 3: send alerts - one message per product, no cap
         for product_name, size_entries in newly_restocked.items():
             sizes_list  = sorted([s for s, _, _ in size_entries])
             sample_info = size_entries[0][2]
-            print(f"{GREEN}[alert] uid={uid} '{product_name}' → sizes {sizes_list}{RESET}")
+            print(f"{GREEN}[alert] uid={uid} '{product_name}' -> sizes {sizes_list}{RESET}")
             await _send_stock_alert(app.bot, uid, product_name, sizes_list, sample_info)
 
         # Step 4: update snapshot for next cycle
@@ -489,7 +490,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/instock — Show in-stock items\n"
         "/list — Show out-of-stock items\n"
         "/restart — Refresh wishlist\n"
-        "/addnewproduct — Add product by code\n"
+        "/addnewproduct — Add one or multiple products\n"
         "/stop — Stop monitoring\n"
         "/help — Help",
         parse_mode="Markdown"
@@ -688,7 +689,7 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown", disable_web_page_preview=True)
 
 async def cmd_instock(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show all IN STOCK items — one photo per product with sizes and buy link."""
+    """Show all IN STOCK items - one photo per product with sizes and buy link."""
     uid = update.effective_user.id
     if uid not in user_sessions:
         await update.message.reply_text("❌ No active session. Use /start.")
@@ -777,7 +778,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/instock — All in-stock items with buy links\n"
         "/restart — Refresh wishlist and restart\n"
         "/stop — Stop monitoring\n"
-        "/addnewproduct — Add product by product code\n"
+        "/addnewproduct — Add one or multiple products\n"
         "/help — This message\n\n"
         "*How alerts work:*\n"
         "• Bot checks every ~3 minutes\n"
@@ -786,10 +787,11 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Size goes OOS then comes back → alerts again\n"
         "• No cap — 50 products restock = 50 alert messages\n\n"
         "*Adding Products:*\n"
-        "• /addnewproduct → send the Product Code from the Shein app\n"
-        "• Find it: Product page → More Information → Product Code\n"
-        "• Example: `443337635_multi`\n"
-        "• Use /restart after adding to monitor the new item",
+        "• /addnewproduct → send one or multiple links/codes, one per line\n"
+        "• Supports onelinks, Shein links, and product codes\n"
+        "• Example single: `443337635_multi`\n"
+        "• Example multi: paste several links each on a new line\n"
+        "• Use /restart after adding to monitor new items",
         parse_mode="Markdown"
     )
 
@@ -809,6 +811,38 @@ def _parse_product_code(text: str) -> str:
     if m:
         return m.group(1)
     return ""
+
+def _extract_all_items(text: str) -> list:
+    """
+    Extract all URLs and product codes from a multi-line message.
+    Returns a list of raw strings (URLs or codes), one per item found.
+    Deduplicates so the same link/code is not processed twice.
+    """
+    seen  = set()
+    items = []
+
+    # Pass 1: grab all URLs (http/https) — these may be on same line or different lines
+    for url in re.findall(r'https?://\S+', text):
+        url = url.strip().rstrip(".,)")  # clean trailing punctuation
+        if url not in seen:
+            seen.add(url)
+            items.append(url)
+
+    # Pass 2: grab bare product codes on lines that contain no URL
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if re.search(r'https?://', line):
+            continue  # already handled above
+        m = re.match(r'^(\d{6,12}(?:_[a-zA-Z0-9]+)?)$', line)
+        if m:
+            code = m.group(1)
+            if code not in seen:
+                seen.add(code)
+                items.append(code)
+
+    return items
 
 def _resolve_onelink(url: str) -> str:
     from urllib.parse import urlparse, parse_qs, unquote
@@ -901,18 +935,51 @@ def _add_to_wishlist_api(product_code_post: str, headers: dict) -> dict:
                 return {"ok": False, "error": "Shein server not responding. Please try again in a moment."}
     return {"ok": False, "error": "Failed after 3 attempts. Please try again."}
 
+async def _process_single_item(raw: str, headers: dict) -> dict:
+    """
+    Resolve a single URL or product code and add it to the wishlist.
+    Returns { "raw": raw, "code": product_code, "ok": bool, "error"/"msg": str }
+    """
+    text = raw.strip()
+
+    # Resolve onelink to a product code
+    if 'onelink.me' in text:
+        resolved = await asyncio.to_thread(_resolve_onelink, text)
+        text = resolved if resolved else text
+
+    product_code = _parse_product_code(text)
+    if not product_code:
+        return {"raw": raw, "code": raw[:40], "ok": False, "error": "Could not find a product code"}
+
+    detail = await asyncio.to_thread(_fetch_product_detail, product_code, headers)
+    if detail.get("ok") and detail.get("numeric_code", "").isdigit() and len(detail["numeric_code"]) == 12:
+        post_code = detail["numeric_code"]
+    else:
+        post_code = product_code.split("_")[0]
+
+    result = await asyncio.to_thread(_add_to_wishlist_api, post_code, headers)
+    if not result["ok"]:
+        # Fallback: try with original product code
+        result = await asyncio.to_thread(_add_to_wishlist_api, product_code, headers)
+
+    return {"raw": raw, "code": product_code, **result}
+
 async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in user_sessions:
         await update.message.reply_text("❌ No active session. Use /start first.")
         return ConversationHandler.END
     await update.message.reply_text(
-        "➕ *Add Product to Wishlist*\n\n"
-        "Send any of the following:\n\n"
-        "1️⃣ *Product Code* — `443337635` or `443337635_navy`\n"
-        "2️⃣ *Shein link* — `https://www.sheinindia.in/.../p/443337635_navy`\n"
-        "3️⃣ *Onelink* — `https://onelink.me/...`\n\n"
-        "💡 Find the link by tapping *Share* on any Shein product page.",
+        "➕ *Add Product(s) to Wishlist*\n\n"
+        "Send one or multiple items — one per line:\n\n"
+        "• *Onelinks* — `https://sheinindia.onelink.me/...`\n"
+        "• *Shein links* — `https://www.sheinindia.in/.../p/443337635`\n"
+        "• *Product codes* — `443337635` or `443337635_navy`\n\n"
+        "*Example (multiple):*\n"
+        "`https://sheinindia.onelink.me/ZrSt/81j63scq`\n"
+        "`https://sheinindia.onelink.me/ZrSt/airgg5z1`\n"
+        "`443337635_multi`\n\n"
+        "💡 Use /restart after adding to start monitoring new items.",
         parse_mode="Markdown"
     )
     return WAITING_FOR_ADD_LINK
@@ -920,44 +987,97 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receive_add_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid  = update.effective_user.id
     text = (update.message.text or "").strip()
+
     if uid not in user_sessions:
         await update.message.reply_text("❌ Session expired. Use /start.")
         return ConversationHandler.END
+
     headers = user_sessions[uid]["headers"]
-    if 'onelink.me' in text:
-        resolved = await asyncio.to_thread(_resolve_onelink, text)
-        text = resolved if resolved else text
-    product_code = _parse_product_code(text)
-    if not product_code:
-        await update.message.reply_text(
-            "❌ Could not find a product code.\n\nExample: `443337635_multi`",
-            parse_mode="Markdown"
-        )
-        return WAITING_FOR_ADD_LINK
-    msg = await update.message.reply_text(f"⏳ Looking up `{product_code}`...", parse_mode="Markdown")
-    detail = await asyncio.to_thread(_fetch_product_detail, product_code, headers)
-    if detail.get("ok") and detail.get("numeric_code", "").isdigit() and len(detail["numeric_code"]) == 12:
-        post_code = detail["numeric_code"]
-    else:
-        post_code = product_code.split("_")[0]
-    await msg.edit_text(f"⏳ Adding `{product_code}` to wishlist...", parse_mode="Markdown")
-    result = await asyncio.to_thread(_add_to_wishlist_api, post_code, headers)
-    if not result["ok"]:
-        result = await asyncio.to_thread(_add_to_wishlist_api, product_code, headers)
-    if result["ok"]:
+
+    # Extract all items from the message (URLs + bare product codes)
+    items = _extract_all_items(text)
+
+    # Fallback: treat whole message as a single item if nothing was detected
+    if not items:
+        items = [text]
+
+    total = len(items)
+
+    # ── Single item: simple inline flow ───────────────────────────────────────
+    if total == 1:
+        msg = await update.message.reply_text("⏳ Processing...", parse_mode="Markdown")
+        result = await _process_single_item(items[0], headers)
+        if result["ok"]:
+            await msg.edit_text(
+                f"✅ *Added to Wishlist!*\n\n"
+                f"Product: `{result['code']}`\n\n"
+                f"🔔 Use /restart to start monitoring this item.",
+                parse_mode="Markdown"
+            )
+        else:
+            err = result["error"]
+            tip = "💡 Try /start to refresh cookies." if "Session expired" in err else "💡 Please try again in a moment."
+            await msg.edit_text(
+                f"❌ *Failed to add*\nCode: `{result['code']}`\n\n{err}\n\n{tip}",
+                parse_mode="Markdown"
+            )
+        return ConversationHandler.END
+
+    # ── Multiple items: process one by one with live progress counter ─────────
+    msg = await update.message.reply_text(
+        f"⏳ Found *{total} items* — processing 1 / {total}...",
+        parse_mode="Markdown"
+    )
+
+    succeeded = []
+    failed    = []
+
+    for i, raw in enumerate(items, 1):
+        # Show live progress with a short preview of the current item
+        preview = raw if len(raw) <= 50 else raw[:47] + "..."
         await msg.edit_text(
-            f"✅ *Added to Wishlist!*\n\n"
-            f"Product: `{product_code}`\n\n"
-            f"🔔 Use /restart to start monitoring this item.",
+            f"⏳ Processing {i} / {total}...\n`{preview}`",
             parse_mode="Markdown"
         )
-    else:
-        err = result['error']
-        tip = "💡 Try /start to refresh cookies." if "Session expired" in err else "💡 Please try again in a moment."
-        await msg.edit_text(
-            f"❌ *Failed to add*\nCode: `{product_code}`\n\n{err}\n\n{tip}",
-            parse_mode="Markdown"
-        )
+
+        result = await _process_single_item(raw, headers)
+
+        if result["ok"]:
+            succeeded.append(result["code"])
+            print(f"{GREEN}[add_multi] uid={uid} ✅ {result['code']}{RESET}")
+        else:
+            failed.append((result["code"], result.get("error", "Unknown error")))
+            print(f"{RED}[add_multi] uid={uid} ❌ {result['code']}: {result.get('error')}{RESET}")
+
+        # Small pause between requests to avoid hammering the API
+        if i < total:
+            await asyncio.sleep(1)
+
+    # ── Build final summary ────────────────────────────────────────────────────
+    lines = [f"*➕ Done — {total} item(s) processed*\n"]
+
+    if succeeded:
+        lines.append(f"✅ *Added ({len(succeeded)}):*")
+        for code in succeeded:
+            lines.append(f"  • `{code}`")
+        lines.append("")
+
+    if failed:
+        lines.append(f"❌ *Failed ({len(failed)}):*")
+        for code, err in failed:
+            lines.append(f"  • `{code}` — {err}")
+        lines.append("")
+
+    if succeeded:
+        lines.append("🔔 Use /restart to start monitoring the new items.")
+    elif failed:
+        lines.append("💡 Try /start to refresh your cookies if session errors occurred.")
+
+    summary = "\n".join(lines)
+    if len(summary) > TEXT_LIMIT:
+        summary = summary[:TEXT_LIMIT - 20] + "\n\n_...and more_"
+
+    await msg.edit_text(summary, parse_mode="Markdown")
     return ConversationHandler.END
 
 # ─── ADMIN ────────────────────────────────────────────────────────────────────
@@ -997,7 +1117,7 @@ async def _restore_sessions(application):
         headers  = _build_headers(cookie_str)
         snapshot, products = await asyncio.to_thread(_fetch_full_wishlist, headers)
         if snapshot in ("AUTH_FAILED", "RATE_LIMITED", None):
-            print(f"{RED}[sessions] uid={uid} restore failed ({snapshot}) — skipping{RESET}")
+            print(f"{RED}[sessions] uid={uid} restore failed ({snapshot}) - skipping{RESET}")
             try:
                 await application.bot.send_message(
                     uid,
@@ -1035,7 +1155,7 @@ async def post_init(application):
         BotCommand("restart",       "Refresh wishlist and restart"),
         BotCommand("stop",          "Stop monitoring"),
         BotCommand("help",          "Show help"),
-        BotCommand("addnewproduct", "Add product by product code"),
+        BotCommand("addnewproduct", "Add one or multiple products by code/link"),
     ]
     admin_extra = [BotCommand("stats", "Show all active sessions (admin)")]
 
