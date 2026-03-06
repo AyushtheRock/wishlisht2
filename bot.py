@@ -55,9 +55,9 @@ BASE_URL       = "https://www.sheinindia.in"
 WISHLIST_API      = BASE_URL + "/api/wishlist/getwishlist"
 ADD_WISHLIST_API  = BASE_URL + "/api/wishlist/addProductToWishlist"
 PRODUCT_API       = BASE_URL + "/api/p/fetchProducts/{code}?SearchExperimentFlag={{}}"
-CHECK_INTERVAL    = 30        # seconds between checks
-JITTER_RANGE      = 10        # ±seconds random jitter
-MAX_BACKOFF       = 600       # max backoff seconds
+CHECK_INTERVAL    = 180       # seconds between checks (3 minutes)
+JITTER_RANGE      = 30        # ±seconds random jitter
+MAX_BACKOFF       = 900       # max backoff seconds (15 minutes)
 AUTH_FAIL_TOLERANCE = 3       # consecutive auth failures before giving up
 SESSIONS_FILE       = "sessions.json"  # persisted sessions across restarts
 
@@ -246,7 +246,7 @@ def _fetch_full_wishlist(headers: dict):
             return page, {}, None
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        with ThreadPoolExecutor(max_workers=5) as pool:
+        with ThreadPoolExecutor(max_workers=3) as pool:  # max 3 concurrent page fetches
             futures = {pool.submit(_fetch_with_retry, pg): pg for pg in range(2, total_pages + 1)}
             results = {}
             for future in as_completed(futures):
@@ -567,7 +567,7 @@ async def receive_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ In stock: {instock}\n"
         f"❌ Out of stock: {oos}\n\n"
         f"🔔 Monitoring started! You'll get alerted the moment any size comes back.\n"
-        f"⏱ Check interval: ~{CHECK_INTERVAL}s\n\n"
+        f"⏱ Check interval: every ~3 minutes\n\n"
         f"💡 Use /instock to browse what's available right now.",
         parse_mode="Markdown"
     )
@@ -611,7 +611,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ In stock: {total - oos}\n"
         f"❌ Out of stock: {oos}\n"
         f"🔔 Sizes alerted (not yet OOS again): {alerted}\n"
-        f"⏱ Check interval: ~{CHECK_INTERVAL}s",
+        f"⏱ Check interval: every ~3 minutes",
         parse_mode="Markdown"
     )
 
@@ -640,7 +640,7 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📦 Total variants: {len(snapshot)}\n"
         f"✅ In stock: {instock}\n"
         f"❌ Out of stock: {oos}\n\n"
-        f"🔔 Monitoring restarted.\n"
+        f"🔔 Monitoring restarted. Checking every ~3 minutes.\n"
         f"💡 Use /instock to browse available items.",
         parse_mode="Markdown"
     )
@@ -780,7 +780,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/addnewproduct — Add product by product code\n"
         "/help — This message\n\n"
         "*How alerts work:*\n"
-        "• Bot checks every ~60 seconds\n"
+        "• Bot checks every ~3 minutes\n"
         "• Same cycle: M + L restock together → *1 message* showing both\n"
         "• Later cycle: XL restocks → *new message* showing XL only\n"
         "• Size goes OOS then comes back → alerts again\n"
@@ -1020,7 +1020,7 @@ async def _restore_sessions(application):
         try:
             await application.bot.send_message(
                 uid,
-                "✅ *Bot restarted* — your session was restored automatically.\nMonitoring continues as normal! 🔔",
+                "✅ *Bot restarted* — your session was restored automatically.\nMonitoring continues as normal! Checking every ~3 minutes. 🔔",
                 parse_mode="Markdown"
             )
         except Exception:
